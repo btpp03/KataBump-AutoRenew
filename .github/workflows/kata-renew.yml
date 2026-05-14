@@ -1,5 +1,8 @@
 name: 🔄 KataBump Auto Renew
 
+permissions:
+  contents: write
+
 on:
   workflow_dispatch:
   schedule:
@@ -32,21 +35,17 @@ jobs:
     if: needs.pre-check.outputs.should_run != 'false'
     runs-on: ubuntu-22.04
     timeout-minutes: 30
-
     env:
       ACCOUNTS: ${{ secrets.ACCOUNTS }}
       BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
       CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-
     steps:
       - name: 📥 Checkout
         uses: actions/checkout@v4
-
       - name: 🐍 Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
       - name: 📦 Install dependencies
         run: |
           pip install -r requirements.txt
@@ -54,7 +53,6 @@ jobs:
           sudo apt-get install -y xvfb libnss3 libatk1.0-0 libatk-bridge2.0-0 \
             libcups2 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 \
             libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2
-
       - name: 🔍 Get Chrome version
         id: get_version
         run: |
@@ -62,23 +60,19 @@ jobs:
           if [ -z "$CHROME_VERSION" ]; then
             CHROME_VERSION=$(google-chrome --version 2>/dev/null | grep -oE '[0-9]+' | head -1)
           fi
-          : "${CHROME_VERSION:=136}"
+          : "\${CHROME_VERSION:=136}"
           echo "Detected: $CHROME_VERSION"
           echo "CHROME_VERSION=$CHROME_VERSION" >> $GITHUB_ENV
-
       - name: 🖥️ Start Xvfb
         run: Xvfb :99 -ac &
-
       - name: ⏳ Random delay
         run: sleep $((RANDOM % 60))
-
       - name: 🚀 Run Renew
         env:
           DISPLAY: ':99'
           HEADLESS: 'false'
           CHROME_VERSION: ${{ env.CHROME_VERSION }}
         run: python renew_katabump.py
-
       - name: 📸 Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4
@@ -87,7 +81,6 @@ jobs:
           path: "*-*.png"
           retention-days: 7
           if-no-files-found: warn
-
       - name: ⏱️ Commit time.txt
         if: always()
         run: |
