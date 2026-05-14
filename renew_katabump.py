@@ -202,6 +202,21 @@ class KataBumpRenew:
         self.driver.find_element(By.CSS_SELECTOR, 'button[type="submit"]').click()
         human_delay()
 
+        # Debug: screenshot + page info after login attempt
+        try:
+            ss_path = f"debug-login-{self.user.split('@')[0]}.png"
+            self.driver.save_screenshot(ss_path)
+            logger.info(f"📸 登录后截图: {ss_path}")
+            error_els = self.driver.find_elements(By.CSS_SELECTOR, '.error, .alert-danger, .invalid-feedback, [role=alert], .toast-error, .text-red, .text-danger')
+            for el in error_els:
+                txt = el.text.strip()
+                if txt:
+                    logger.info(f"⚠️ 页面错误: {txt}")
+            logger.info(f"📍 URL: {self.driver.current_url}")
+            logger.info(f"📍 Title: {self.driver.title}")
+        except Exception as e:
+            logger.warning(f"截图失败: {e}")
+
         # 检查是否还在登录页
         if "login" in self.driver.current_url:
             raise Exception("登录失败 — 仍在登录页")
