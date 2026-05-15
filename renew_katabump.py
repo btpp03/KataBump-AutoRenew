@@ -64,24 +64,36 @@ def mask_email(email):
 # ===================== TG 通知 =====================
 def send_tg(text, photo_path=None):
     if not TG_BOT_TOKEN or not TG_CHAT_ID:
+        logger.warning("TG 未配置: BOT_TOKEN或CHAT_ID为空，跳过通知")
         return
     tz = timezone(timedelta(hours=8))
     ts = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
-    full = f"🔄 KataBump 续期通知\n\n时间: {ts}\n\n{text}"
+    full = f"🔄 KataBump 续期通知
+
+时间: {ts}
+
+{text}"
     try:
         if photo_path and os.path.exists(photo_path):
-            requests.post(
+            resp = requests.post(
                 f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendPhoto",
                 data={"chat_id": TG_CHAT_ID, "caption": full},
-                files={'photo': open(photo_path, 'rb')}, timeout=20)
+                files={'photo': open(photo_path, 'rb')},
+                timeout=20)
         else:
-            requests.post(
+            resp = requests.post(
                 f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage",
-                data={"chat_id": TG_CHAT_ID, "text": full}, timeout=10)
+                data={"chat_id": TG_CHAT_ID, "text": full},
+                timeout=10)
+        if resp.status_code != 200:
+            logger.warning(f"TG 发送失败: HTTP {resp.status_code} {resp.text[:200]}")
+        else:
+            logger.info("✅ TG 通知已发送")
     except Exception as e:
         logger.warning(f"TG 发送失败: {e}")
 
-# ===================== 核心 =====================
+
+# =# ===================== 核心 =====================
 class KataBumpRenew:
     def __init__(self, user, password):
         self.user = user
