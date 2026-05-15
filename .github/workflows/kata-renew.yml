@@ -37,6 +37,8 @@ jobs:
     timeout-minutes: 30
     env:
       ACCOUNTS: ${{ secrets.ACCOUNTS }}
+      TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+      TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
       BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
       CHAT_ID: ${{ secrets.TG_CHAT_ID }}
     steps:
