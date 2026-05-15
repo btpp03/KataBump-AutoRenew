@@ -68,11 +68,7 @@ def send_tg(text, photo_path=None):
         return
     tz = timezone(timedelta(hours=8))
     ts = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
-    full = f"🔄 KataBump 续期通知
-
-时间: {ts}
-
-{text}"
+    full = f"🔄 KataBump 续期通知\n\n时间: {ts}\n\n{text}"
     try:
         if photo_path and os.path.exists(photo_path):
             resp = requests.post(
