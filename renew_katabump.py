@@ -28,6 +28,38 @@ from selenium.common.exceptions import TimeoutException, WebDriverException
 HEADLESS = os.getenv('HEADLESS', 'false').lower() == 'true'
 ACCOUNTS_ENV = os.getenv('ACCOUNTS', os.getenv('USERS_JSON', ''))
 PROXY_SERVER = os.getenv('HTTP_PROXY', '')
+
+# Hysteria2 proxy (residential-grade, better for passing Turnstile)
+HY2_URL = os.getenv('HY2_PROXY_URL', '')
+_use_hy2 = False
+if HY2_URL.startswith('hysteria2://'):
+    try:
+        import subprocess, tempfile, os as _os, time as _time, signal
+        # write a tiny socks5 shim via sing-box if available in PATH
+        _sb = subprocess.run(['which', 'sing-box'], capture_output=True, text=True).stdout.strip()
+        if _sb:
+            import re, urllib.parse, json
+            m = re.match(r'hysteria2://([^@]+)@([^:]+):(\d+)\?([^#]*)', HY2_URL)
+            if m:
+                pw, srv, port, qs = m.group(1), m.group(2), int(m.group(3)), m.group(4)
+                qd = dict(urllib.parse.parse_qsl(qs))
+                peer = qd.get('peer', 'www.bing.com')
+                cfg = {'log': {'level': 'warn'},
+                       'inbounds': [{'type': 'socks', 'listen': '127.0.0.1', 'listen_port': 10900}],
+                       'outbounds': [{'type': 'hysteria2', 'server': srv, 'server_port': port,
+                                      'password': pw, 'tls': {'enabled': True, 'server_name': peer,
+                                                             'insecure': True}}]}
+                _cf = tempfile.NamedTemporaryFile('w', suffix='.json', delete=False)
+                json.dump(cfg, _cf); _cf.close()
+                _proc = subprocess.Popen([_sb, 'run', '-c', _cf.name],
+                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                _time.sleep(3)
+                PROXY_SERVER = 'socks5://127.0.0.1:10900'
+                _use_hy2 = True
+                logger.info("🛡️ HY2 代理已启动 → socks5://127.0.0.1:10900")
+    except Exception as e:
+        logger.warning(f"HY2 启动失败，回退直连: {e}")
+
 TG_BOT_TOKEN = os.getenv('TG_BOT_TOKEN', os.getenv('BOT_TOKEN', ''))
 TG_CHAT_ID = os.getenv('TG_CHAT_ID', os.getenv('CHAT_ID', ''))
 
@@ -138,31 +170,86 @@ class KataBumpRenew:
                 if v is None:
                     raise
 
-    def _handle_turnstile(self, context=""):
-        """Cloudflare Turnstile — ActionChains 偏移点击"""
+    def _click_turnstile_iframe(self):
+        """Turnstile 真实 checkbox 在 iframe 内 — 切进去点真实 checkbox"""
         try:
-            container = WebDriverWait(self.driver, 15).until(
+            # find the turnstile iframe (class usually cf-chl-widget-* or iframe[src*=turnstile])
+            iframes = self.driver.find_elements(By.CSS_SELECTOR,
+                "iframe[src*='turnstile'], iframe.cf-chl-widget-*, iframe[title*='回']")
+            target = None
+            for f in iframes:
+                # only the visible, sized iframe
+                box = f.size
+                if box.get('width', 0) > 50 and box.get('height', 0) > 50:
+                    target = f
+                    break
+            if not target:
+                # generic: first iframe that looks like turnstile
+                for f in self.driver.find_elements(By.TAG_NAME, "iframe"):
+                    src = f.get_attribute("src") or ""
+                    if "turnstile" in src or "challenges" in src or "cf-assets" in src:
+                        target = f
+                        break
+            if not target:
+                return False
+
+            self.driver.switch_to.frame(target)
+            try:
+                cb = WebDriverWait(self.driver, 8).until(
+                    EC.element_to_be_clickable((By.CSS_SELECTOR,
+                        "input[type='checkbox'], .checkbox, #checkbox")))
+                # human-like click
+                actions = ActionChains(self.driver)
+                actions.move_to_element(cb)
+                actions.pause(random.uniform(0.3, 0.6))
+                actions.click()
+                actions.perform()
+                logger.info(f"🖱️ {self.masked} [{context}] Turnstile iframe checkbox 点击")
+                return True
+            finally:
+                self.driver.switch_to.default_content()
+        except Exception as e:
+            try:
+                self.driver.switch_to.default_content()
+            except:
+                pass
+            logger.warning(f"⚠️ {self.masked} Turnstile iframe 点击失败: {e}")
+            return False
+
+    def _handle_turnstile(self, context=""):
+        """Cloudflare Turnstile — 先点 iframe 内真实 checkbox，再等待 token 出现"""
+        try:
+            WebDriverWait(self.driver, 15).until(
                 EC.presence_of_element_located((By.CLASS_NAME, "cf-turnstile")))
-            size = container.size
-            base_x = -(size['width'] / 2) + (size['width'] * 0.12)
-            rand_x = base_x + random.uniform(-5, 5)
-            rand_y = random.uniform(-5, 5)
 
-            actions = ActionChains(self.driver)
-            actions.move_to_element(container)
-            actions.pause(random.uniform(0.5, 0.8))
-            actions.move_to_element_with_offset(container, rand_x, rand_y)
-            actions.click_and_hold()
-            actions.pause(random.uniform(0.1, 0.25))
-            actions.release()
-            actions.perform()
-            logger.info(f"🖱️ {self.masked} [{context}] Turnstile 偏移点击")
+            clicked = self._click_turnstile_iframe()
+            if not clicked:
+                # fallback: offset click on the container (old method)
+                try:
+                    container = self.driver.find_element(By.CLASS_NAME, "cf-turnstile")
+                    size = container.size
+                    rand_x = -(size['width'] / 2) + (size['width'] * 0.12) + random.uniform(-5, 5)
+                    rand_y = random.uniform(-5, 5)
+                    actions = ActionChains(self.driver)
+                    actions.move_to_element(container)
+                    actions.pause(random.uniform(0.5, 0.8))
+                    actions.move_to_element_with_offset(container, rand_x, rand_y)
+                    actions.click_and_hold()
+                    actions.pause(random.uniform(0.1, 0.25))
+                    actions.release()
+                    actions.perform()
+                    logger.info(f"🖱️ {self.masked} [{context}] Turnstile 偏移点击 (fallback)")
+                except Exception as e:
+                    logger.warning(f"⚠️ {self.masked} [{context}] 偏移点击异常: {e}")
 
-            # 轮询 token
-            for _ in range(15):
-                token = self.driver.execute_script(
-                    'return document.querySelector("input[name=\'cf-turnstile-response\']").value;')
-                if token and len(token) > 20:
+            # 轮询 token (CF 有时延迟几秒才返回)
+            for _ in range(30):
+                try:
+                    token = self.driver.execute_script(
+                        'return document.querySelector("input[name=\'cf-turnstile-response\']").value;')
+                except Exception:
+                    token = None
+                if token and len(str(token)) > 20:
                     logger.info(f"✅ {self.masked} [{context}] Turnstile 通过!")
                     sleep_ms(1500 + random.random() * 1000)
                     return True
