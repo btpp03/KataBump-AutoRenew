@@ -34,11 +34,12 @@ HY2_URL = os.getenv('HY2_PROXY_URL', '')
 _use_hy2 = False
 if HY2_URL.startswith('hysteria2://'):
     try:
-        import subprocess, tempfile, os as _os, time as _time, signal
-        # write a tiny socks5 shim via sing-box if available in PATH
-        _sb = subprocess.run(['which', 'sing-box'], capture_output=True, text=True).stdout.strip()
+        import subprocess, tempfile, time as _time, json, re, urllib.parse
+        _cwd = os.getcwd()
+        _sb = os.path.join(_cwd, 'sing-box')
+        if not os.path.exists(_sb):
+            _sb = subprocess.run(['which', 'sing-box'], capture_output=True, text=True).stdout.strip()
         if _sb:
-            import re, urllib.parse, json
             m = re.match(r'hysteria2://([^@]+)@([^:]+):(\d+)\?([^#]*)', HY2_URL)
             if m:
                 pw, srv, port, qs = m.group(1), m.group(2), int(m.group(3)), m.group(4)
@@ -54,9 +55,18 @@ if HY2_URL.startswith('hysteria2://'):
                 _proc = subprocess.Popen([_sb, 'run', '-c', _cf.name],
                                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 _time.sleep(3)
-                PROXY_SERVER = 'socks5://127.0.0.1:10900'
-                _use_hy2 = True
-                logger.info("🛡️ HY2 代理已启动 → socks5://127.0.0.1:10900")
+                _ok = subprocess.run(['curl', '-s', '--max-time', '5', '-x', 'socks5://127.0.0.1:10900',
+                                      'https://api.ipify.org'], capture_output=True, text=True)
+                if _ok.returncode == 0 and _ok.stdout.strip():
+                    PROXY_SERVER = 'socks5://127.0.0.1:10900'
+                    _use_hy2 = True
+                    logger.info(f"🛡️ HY2 代理已启动 → socks5://127.0.0.1:10900 (exit ip: {_ok.stdout.strip()})")
+                else:
+                    logger.warning("⚠️ HY2 启动但代理不可用，回退直连")
+            else:
+                logger.warning("⚠️ HY2_URL 格式无法解析，回退直连")
+        else:
+            logger.warning("⚠️ 未找到 sing-box 二进制，回退直连")
     except Exception as e:
         logger.warning(f"HY2 启动失败，回退直连: {e}")
 
@@ -173,23 +183,27 @@ class KataBumpRenew:
     def _click_turnstile_iframe(self):
         """Turnstile 真实 checkbox 在 iframe 内 — 切进去点真实 checkbox"""
         try:
-            # find the turnstile iframe (class usually cf-chl-widget-* or iframe[src*=turnstile])
-            iframes = self.driver.find_elements(By.CSS_SELECTOR,
-                "iframe[src*='turnstile'], iframe.cf-chl-widget-*, iframe[title*='回']")
+            # find the turnstile iframe
             target = None
-            for f in iframes:
-                # only the visible, sized iframe
-                box = f.size
-                if box.get('width', 0) > 50 and box.get('height', 0) > 50:
+            # 1) src-based detection
+            for f in self.driver.find_elements(By.TAG_NAME, "iframe"):
+                src = f.get_attribute("src") or ""
+                cls = f.get_attribute("class") or ""
+                if "turnstile" in src or "chl-widget" in cls or "challenges" in src:
                     target = f
                     break
+            # 2) fallback: any visible sized iframe next to cf-turnstile
             if not target:
-                # generic: first iframe that looks like turnstile
-                for f in self.driver.find_elements(By.TAG_NAME, "iframe"):
-                    src = f.get_attribute("src") or ""
-                    if "turnstile" in src or "challenges" in src or "cf-assets" in src:
-                        target = f
-                        break
+                try:
+                    host = self.driver.find_element(By.CLASS_NAME, "cf-turnstile")
+                    # the iframe is usually a sibling/parent
+                    for f in self.driver.find_elements(By.TAG_NAME, "iframe"):
+                        box = f.size
+                        if box.get('width', 0) > 30 and box.get('height', 0) > 30:
+                            target = f
+                            break
+                except Exception:
+                    pass
             if not target:
                 return False
 
@@ -197,21 +211,20 @@ class KataBumpRenew:
             try:
                 cb = WebDriverWait(self.driver, 8).until(
                     EC.element_to_be_clickable((By.CSS_SELECTOR,
-                        "input[type='checkbox'], .checkbox, #checkbox")))
-                # human-like click
+                        "input[type='checkbox']")))
                 actions = ActionChains(self.driver)
                 actions.move_to_element(cb)
                 actions.pause(random.uniform(0.3, 0.6))
                 actions.click()
                 actions.perform()
-                logger.info(f"🖱️ {self.masked} [{context}] Turnstile iframe checkbox 点击")
+                logger.info(f"🖱️ {self.masked} Turnstile iframe checkbox 点击")
                 return True
             finally:
                 self.driver.switch_to.default_content()
         except Exception as e:
             try:
                 self.driver.switch_to.default_content()
-            except:
+            except Exception:
                 pass
             logger.warning(f"⚠️ {self.masked} Turnstile iframe 点击失败: {e}")
             return False
