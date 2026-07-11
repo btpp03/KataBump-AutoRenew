@@ -37,6 +37,8 @@ jobs:
     timeout-minutes: 30
     env:
       ACCOUNTS: ${{ secrets.ACCOUNTS }}
+      USERS_JSON: ${{ secrets.USERS_JSON }}
+      HY2_PROXY_URL: ${{ secrets.HY2_PROXY_URL }}
       TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
       TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
       BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
@@ -54,7 +56,14 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y xvfb libnss3 libatk1.0-0 libatk-bridge2.0-0 \
             libcups2 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 \
-            libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2
+            libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2 wget
+      - name: 🌐 Install sing-box (for HY2 proxy)
+        run: |
+          wget -qO sb.tar.gz "https://github.com/SagerNet/sing-box/releases/download/v1.11.7/sing-box-1.11.7-linux-amd64.tar.gz"
+          tar -xzf sb.tar.gz
+          mv sing-box-*/sing-box ./sing-box
+          chmod +x ./sing-box
+          echo "sing-box ready"
       - name: 🔍 Get Chrome version
         id: get_version
         run: |
@@ -62,7 +71,7 @@ jobs:
           if [ -z "$CHROME_VERSION" ]; then
             CHROME_VERSION=$(google-chrome --version 2>/dev/null | grep -oE '[0-9]+' | head -1)
           fi
-          : "\${CHROME_VERSION:=136}"
+          : "${CHROME_VERSION:=136}"
           echo "Detected: $CHROME_VERSION"
           echo "CHROME_VERSION=$CHROME_VERSION" >> $GITHUB_ENV
       - name: 🖥️ Start Xvfb
