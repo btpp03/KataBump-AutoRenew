@@ -28,53 +28,57 @@ from selenium.common.exceptions import TimeoutException, WebDriverException
 HEADLESS = os.getenv('HEADLESS', 'false').lower() == 'true'
 ACCOUNTS_ENV = os.getenv('ACCOUNTS', os.getenv('USERS_JSON', ''))
 PROXY_SERVER = os.getenv('HTTP_PROXY', '')
-
-# Hysteria2 proxy (residential-grade, better for passing Turnstile)
 HY2_URL = os.getenv('HY2_PROXY_URL', '')
-_use_hy2 = False
-if HY2_URL.startswith('hysteria2://'):
-    try:
-        import subprocess, tempfile, time as _time, json, re, urllib.parse
-        _cwd = os.getcwd()
-        _sb = os.path.join(_cwd, 'sing-box')
-        if not os.path.exists(_sb):
-            _sb = subprocess.run(['which', 'sing-box'], capture_output=True, text=True).stdout.strip()
-        if _sb:
-            m = re.match(r'hysteria2://([^@]+)@([^:]+):(\d+)\?([^#]*)', HY2_URL)
-            if m:
-                pw, srv, port, qs = m.group(1), m.group(2), int(m.group(3)), m.group(4)
-                qd = dict(urllib.parse.parse_qsl(qs))
-                peer = qd.get('peer', 'www.bing.com')
-                cfg = {'log': {'level': 'warn'},
-                       'inbounds': [{'type': 'socks', 'listen': '127.0.0.1', 'listen_port': 10900}],
-                       'outbounds': [{'type': 'hysteria2', 'server': srv, 'server_port': port,
-                                      'password': pw, 'tls': {'enabled': True, 'server_name': peer,
-                                                             'insecure': True}}]}
-                _cf = tempfile.NamedTemporaryFile('w', suffix='.json', delete=False)
-                json.dump(cfg, _cf); _cf.close()
-                _proc = subprocess.Popen([_sb, 'run', '-c', _cf.name],
-                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                _time.sleep(3)
-                _ok = subprocess.run(['curl', '-s', '--max-time', '5', '-x', 'socks5://127.0.0.1:10900',
-                                      'https://api.ipify.org'], capture_output=True, text=True)
-                if _ok.returncode == 0 and _ok.stdout.strip():
-                    PROXY_SERVER = 'socks5://127.0.0.1:10900'
-                    _use_hy2 = True
-                    logger.info(f"🛡️ HY2 代理已启动 → socks5://127.0.0.1:10900 (exit ip: {_ok.stdout.strip()})")
-                else:
-                    logger.warning("⚠️ HY2 启动但代理不可用，回退直连")
-            else:
-                logger.warning("⚠️ HY2_URL 格式无法解析，回退直连")
-        else:
-            logger.warning("⚠️ 未找到 sing-box 二进制，回退直连")
-    except Exception as e:
-        logger.warning(f"HY2 启动失败，回退直连: {e}")
 
 TG_BOT_TOKEN = os.getenv('TG_BOT_TOKEN', os.getenv('BOT_TOKEN', ''))
 TG_CHAT_ID = os.getenv('TG_CHAT_ID', os.getenv('CHAT_ID', ''))
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+
+def setup_hy2_proxy():
+    """Start sing-box tunnel for HY2_PROXY_URL → socks5://127.0.0.1:10900.
+    Returns the proxy string (or '' if not used/failed)."""
+    import subprocess, tempfile, time as _time, json as _json, re as _re, urllib.parse as _up
+    hy2 = os.getenv('HY2_PROXY_URL', '')
+    if not hy2.startswith('hysteria2://'):
+        return ''
+    _cwd = os.getcwd()
+    _sb = os.path.join(_cwd, 'sing-box')
+    if not os.path.exists(_sb):
+        _sb = subprocess.run(['which', 'sing-box'], capture_output=True, text=True).stdout.strip()
+    if not _sb:
+        logger.warning("⚠️ 未找到 sing-box 二进制，回退直连")
+        return ''
+    m = _re.match(r'hysteria2://([^@]+)@([^:]+):(\d+)\?([^#]*)', hy2)
+    if not m:
+        logger.warning("⚠️ HY2_URL 格式无法解析，回退直连")
+        return ''
+    pw, srv, port, qs = m.group(1), m.group(2), int(m.group(3)), m.group(4)
+    qd = dict(_up.parse_qsl(qs))
+    peer = qd.get('peer', 'www.bing.com')
+    cfg = {'log': {'level': 'warn'},
+           'inbounds': [{'type': 'socks', 'listen': '127.0.0.1', 'listen_port': 10900}],
+           'outbounds': [{'type': 'hysteria2', 'server': srv, 'server_port': port,
+                          'password': pw, 'tls': {'enabled': True, 'server_name': peer,
+                                                 'insecure': True}}]}
+    _cf = tempfile.NamedTemporaryFile('w', suffix='.json', delete=False)
+    _json.dump(cfg, _cf); _cf.close()
+    try:
+        subprocess.Popen([_sb, 'run', '-c', _cf.name],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        _time.sleep(3)
+        _ok = subprocess.run(['curl', '-s', '--max-time', '5', '-x', 'socks5://127.0.0.1:10900',
+                              'https://api.ipify.org'], capture_output=True, text=True)
+        if _ok.returncode == 0 and _ok.stdout.strip():
+            logger.info(f"🛡️ HY2 代理已启动 → socks5://127.0.0.1:10900 (exit ip: {_ok.stdout.strip()})")
+            return 'socks5://127.0.0.1:10900'
+        else:
+            logger.warning("⚠️ HY2 启动但代理不可用，回退直连")
+    except Exception as e:
+        logger.warning(f"HY2 启动失败，回退直连: {e}")
+    return ''
 
 # ===================== 工具 =====================
 def rand_int(a, b): return random.randint(a, b)
@@ -487,6 +491,11 @@ def main():
     logger.info("=" * 50)
     logger.info("🚀 KataBump 自动续期启动！")
     logger.info("=" * 50)
+
+    global PROXY_SERVER
+    hy2_proxy = setup_hy2_proxy()
+    if hy2_proxy:
+        PROXY_SERVER = hy2_proxy
 
     accounts = load_accounts()
     if not accounts:
