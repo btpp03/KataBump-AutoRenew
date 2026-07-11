@@ -108,13 +108,29 @@ def mask_email(email):
         return "User"
 
 # ===================== TG 通知 =====================
+REPO_NAME = os.getenv('GITHUB_REPOSITORY', 'btpp03/KataBump-AutoRenew')
+
+def _proxy_label():
+    hy2 = os.getenv('HY2_PROXY_URL', '')
+    if hy2.startswith('hysteria2://'):
+        # show exit ip hint from host part
+        try:
+            host = hy2.split('@')[1].split('?')[0].split(':')[0]
+            return f"🛡️ 代理: HY2 住宅 ({host})"
+        except Exception:
+            return "🛡️ 代理: HY2 住宅"
+    if PROXY_SERVER:
+        return f"🛡️ 代理: {PROXY_SERVER}"
+    return "🛡️ 代理: 直连 (无)"
+
 def send_tg(text, photo_path=None):
     if not TG_BOT_TOKEN or not TG_CHAT_ID:
         logger.warning("TG 未配置: BOT_TOKEN或CHAT_ID为空，跳过通知")
         return
     tz = timezone(timedelta(hours=8))
     ts = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
-    full = f"🔄 KataBump 续期通知\n\n时间: {ts}\n\n{text}"
+    header = f"🔄 KataBump 续期通知\n📦 Repo: {REPO_NAME}\n{_proxy_label()}\n🕐 时间: {ts}"
+    full = f"{header}\n\n{text}"
     try:
         if photo_path and os.path.exists(photo_path):
             resp = requests.post(
@@ -528,7 +544,8 @@ def main():
             sleep_ms(wait)
 
     # 汇总
-    summary = f"📊 续期汇总: {success_count}/{len(accounts)} 成功\n\n"
+    header = f"📦 Repo: {REPO_NAME}\n{_proxy_label()}\n📊 续期汇总: {success_count}/{len(accounts)} 成功"
+    summary = header + "\n\n"
     summary += "\n\n".join([r['msg'] for r in results])
     logger.info(summary)
     send_tg(summary)
