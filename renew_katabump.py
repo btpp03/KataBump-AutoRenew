@@ -322,11 +322,30 @@ class KataBumpRenew:
             raise Exception("未找到密码输入框")
         sleep_ms(2000 + random.random() * 1000)
 
-        # Turnstile
-        self._handle_turnstile("Login")
+        # Turnstile：必须确认获得有效 token 后才能提交登录
+        turnstile_ok = False
+        for captcha_attempt in range(1, 4):
+            logger.info(f"🔐 {self.masked} Turnstile 第 {captcha_attempt}/3 次尝试...")
+            if self._handle_turnstile("Login"):
+                turnstile_ok = True
+                break
+
+            logger.warning(f"⚠️ {self.masked} Turnstile 未通过，本次不提交登录")
+            if captcha_attempt < 3:
+                self.driver.refresh()
+                sleep_ms(5000 + random.random() * 2000)
+                if not human_type(self.driver, "input#email", self.user):
+                    raise Exception("刷新后未找到邮箱输入框")
+                if not human_type(self.driver, "input#password", self.password):
+                    raise Exception("刷新后未找到密码输入框")
+                sleep_ms(1500 + random.random() * 1000)
+
+        if not turnstile_ok:
+            self.driver.save_screenshot(f"debug-captcha-{self.user.split('@')[0]}.png")
+            raise Exception("Turnstile 连续 3 次未通过，已停止登录提交")
 
         # 登录
-        logger.info(f"📤 {self.masked} 提交登录...")
+        logger.info(f"📤 {self.masked} 验证码已通过，提交登录...")
         self.driver.find_element(By.CSS_SELECTOR, 'button[type="submit"]').click()
         human_delay()
 
