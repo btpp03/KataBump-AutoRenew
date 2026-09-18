@@ -3,7 +3,7 @@ name: KataBump Auto Renew
 on:
   workflow_dispatch:
   schedule:
-    - cron: "40 14 18 9 *"
+    - cron: "*/20 * * * *"
 
 jobs:
   pre-check:
