@@ -3,7 +3,7 @@ name: KataBump Auto Renew
 on:
   workflow_dispatch:
   schedule:
-    - cron: "30 2 * * *"
+    - cron: "40 14 18 9 *"
 
 jobs:
   pre-check:
@@ -11,10 +11,15 @@ jobs:
     outputs:
       should_run: ${{ steps.check.outputs.should_run }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
       - name: Decide cycle
         id: check
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          if [ -f FORCE_RENEW ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "FORCE_RENEW switch detected -> force run"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "should_run=true" >> "$GITHUB_OUTPUT"
             echo "manual trigger -> run"
           else
@@ -90,15 +95,16 @@ jobs:
           path: "*-*.png"
           retention-days: 7
           if-no-files-found: warn
-      - name: Commit time.txt
+      - name: Update time.txt / clear FORCE_RENEW
         if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           echo "$(date +'%Y-%m-%d %H:%M:%S')" > time.txt
-          git add time.txt 2>/dev/null || true
+          git add time.txt
+          git rm -f --ignore-unmatch FORCE_RENEW 2>/dev/null || true
           git diff --cached --quiet || {
-            git commit -m "tick $(date +'%Y-%m-%d %H:%M:%S')"
+            git commit -m "tick + clear switch $(date +'%Y-%m-%d %H:%M:%S')"
             git pull --rebase origin main
             git push origin HEAD:main
           }
