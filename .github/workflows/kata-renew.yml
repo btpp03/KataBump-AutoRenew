@@ -14,25 +14,26 @@ jobs:
     outputs:
       should_run: ${{ steps.check.outputs.should_run }}
     steps:
-      - name: 4-day cycle check (skip for manual trigger)
+      - name: Decide cycle
         id: check
-        if: github.event_name != 'workflow_dispatch'
         run: |
-          DAYS=$(( $(date -u +%s) / 86400 ))
-          REMAINDER=$(( $DAYS % 4 ))
-          if [ $REMAINDER -eq 0 ]; then
-            echo "should_run=true" >> $GITHUB_OUTPUT
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "manual trigger -> run"
           else
-            echo "should_run=false" >> $GITHUB_OUTPUT
-            echo "⏭️ 不在4天周期内，跳过"
+            DAYS=$(( $(date -u +%s) / 86400 ))
+            if [ $(( DAYS % 4 )) -eq 0 ]; then
+              echo "should_run=true" >> "$GITHUB_OUTPUT"
+              echo "in 4-day cycle -> run"
+            else
+              echo "should_run=false" >> "$GITHUB_OUTPUT"
+              echo "skip: day remainder $(( DAYS % 4 ))"
+            fi
           fi
-      - name: Always run for manual trigger
-        if: github.event_name == 'workflow_dispatch'
-        run: echo "should_run=true" >> $GITHUB_OUTPUT
 
   renew:
     needs: pre-check
-    if: needs.pre-check.outputs.should_run != 'false'
+    if: needs.pre-check.outputs.should_run == 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     env:
