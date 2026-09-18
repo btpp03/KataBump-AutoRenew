@@ -1,0 +1,104 @@
+name: KataBump Auto Renew
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 2 * * *"
+
+jobs:
+  pre-check:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+    steps:
+      - name: Decide cycle
+        id: check
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "manual trigger -> run"
+          else
+            DAYS=$(( $(date -u +%s) / 86400 ))
+            if [ $(( DAYS % 4 )) -eq 0 ]; then
+              echo "should_run=true" >> "$GITHUB_OUTPUT"
+              echo "in 4-day cycle -> run"
+            else
+              echo "should_run=false" >> "$GITHUB_OUTPUT"
+              echo "skip: day remainder $(( DAYS % 4 ))"
+            fi
+          fi
+
+  renew:
+    needs: pre-check
+    if: needs.pre-check.outputs.should_run == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      ACCOUNTS: ${{ secrets.ACCOUNTS }}
+      USERS_JSON: ${{ secrets.USERS_JSON }}
+      HY2_PROXY_URL: ${{ secrets.HY2_PROXY_URL }}
+      TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+      TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+      BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+      CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          sudo apt-get update -qq
+          sudo apt-get install -y xvfb libnss3 libatk1.0-0 libatk-bridge2.0-0 \
+            libcups2 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 \
+            libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2 wget
+      - name: Install sing-box
+        run: |
+          wget -qO sb.tar.gz "https://github.com/SagerNet/sing-box/releases/download/v1.11.7/sing-box-1.11.7-linux-amd64.tar.gz"
+          tar -xzf sb.tar.gz
+          mv sing-box-*/sing-box ./sing-box
+          chmod +x ./sing-box
+          echo "sing-box ready"
+      - name: Get Chrome version
+        id: get_version
+        run: |
+          CHROME_VERSION=$(chromium-browser --version 2>/dev/null | grep -oE '[0-9]+' | head -1)
+          if [ -z "$CHROME_VERSION" ]; then
+            CHROME_VERSION=$(google-chrome --version 2>/dev/null | grep -oE '[0-9]+' | head -1)
+          fi
+          : "${CHROME_VERSION:=136}"
+          echo "Detected: $CHROME_VERSION"
+          echo "CHROME_VERSION=$CHROME_VERSION" >> $GITHUB_ENV
+      - name: Start Xvfb
+        run: Xvfb :99 -ac &
+      - name: Random delay
+        run: sleep $((RANDOM % 60))
+      - name: Run Renew
+        env:
+          DISPLAY: ':99'
+          HEADLESS: 'false'
+          CHROME_VERSION: ${{ env.CHROME_VERSION }}
+        run: python renew_katabump.py
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: katabump-screenshots
+          path: "*-*.png"
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Commit time.txt
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          echo "$(date +'%Y-%m-%d %H:%M:%S')" > time.txt
+          git add time.txt 2>/dev/null || true
+          git diff --cached --quiet || {
+            git commit -m "tick $(date +'%Y-%m-%d %H:%M:%S')"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          }
